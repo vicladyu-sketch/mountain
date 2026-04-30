@@ -20,19 +20,29 @@ def main():
             all_items.extend(items)
         except Exception as e:
             print(f"Failed to fetch page {page}: {e}")
+            total_fetched = len(all_items)
             break
+    else:
+        total_fetched = len(all_items)
             
-    print(f"Total raw items fetched: {len(all_items)}")
-    
-    if not all_items:
-        print("No items fetched. Exiting.")
-        return
-        
-    df_raw = pd.DataFrame(all_items)
-    print("Saving raw data...")
+    print(f"Total raw items fetched: {total_fetched}")
     raw_dir = Path("data/raw")
     raw_dir.mkdir(parents=True, exist_ok=True)
-    df_raw.to_csv(raw_dir / "forest_mountains_raw.csv", index=False, encoding='utf-8-sig')
+    raw_path = raw_dir / "forest_mountains_raw.csv"
+
+    if total_fetched == 0:
+        print("No items fetched from API. Attempting to fallback to raw data...")
+        if raw_path.exists():
+            df_raw = pd.read_csv(raw_path)
+            print(f"Loaded {len(df_raw)} records from existing raw data.")
+        else:
+            print("No raw data file found. Exiting.")
+            return
+    else:
+        # Convert to DataFrame and save raw
+        df_raw = pd.DataFrame(all_items)
+        df_raw.to_csv(raw_path, index=False, encoding="utf-8-sig")
+        print(f"Saved raw data to {raw_path}")
     
     print("Preprocessing data...")
     df_clean = clean_and_enrich_forest_data(df_raw)

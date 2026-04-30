@@ -1,37 +1,15 @@
-"""Streamlit Dashboard for Hiking Data Analysis."""
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
 
-# Set page config
-st.set_page_config(
-    page_title="산림청 기상/등산로 대시보드",
-    page_icon="⛰️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS for styling
-st.markdown("""
-<style>
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #2e7d32;
-    }
-    .metric-label {
-        font-size: 1rem;
-        color: #666;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Streamlit Page Config
+st.set_page_config(page_title="PeakFit", page_icon="⛰️", layout="wide")
 
 @st.cache_data
 def load_data():
     """Load preprocessed data."""
-    # app.py 위치를 기준으로 상대 경로 설정 (streamlit cloud 배포 시 경로 오류 방지)
+    # Use relative pathing to resolve correctly on Streamlit Cloud
     current_dir = Path(__file__).parent
     data_path = current_dir.parent / "data" / "processed" / "forest_mountains_clean.csv"
     
@@ -40,113 +18,132 @@ def load_data():
         return df
     return pd.DataFrame()
 
-# Title
-st.title("⛰️ 산림청 산림공간정보 등산로 현황")
-st.markdown("공공데이터포털 **산림청 산정보 서비스** 데이터를 분석한 인터랙티브 대시보드입니다.")
-
-# Load data
 df = load_data()
 
+# ----------------- UI Layout -----------------
+st.title("⛰️ PeakFit")
+st.subheader("내 컨디션에 맞는 안전한 등산 코스 추천 (11종 데이터 통합)")
+
 if df.empty:
-    st.warning("Processed data not found. Please run the data fetching and preprocessing script first.")
+    st.error("Processed data not found. Please run the preprocessing scripts first.")
     st.stop()
 
-# Sidebar filters
-st.sidebar.header("필터 옵션")
+# --- SIDEBAR (Filters per Persona) ---
+st.sidebar.header("🔍 나에게 맞는 등산 코스 찾기")
 
-ad_primary_list = ["전체"] + sorted(list(df['admin_primary'].unique()))
-selected_primary = st.sidebar.selectbox("시/도 선택", ad_primary_list)
+# 출발 지역 필터
+all_regions = ["전국"] + sorted(df['admin_primary'].dropna().unique().tolist())
+selected_region = st.sidebar.selectbox("출발 지역 (예: 서울)", options=all_regions)
 
-# Filter by selected admin_primary
-if selected_primary != "전체":
-    filtered_df = df[df['admin_primary'] == selected_primary]
-else:
-    filtered_df = df.copy()
+# 난이도 필터
+diff_options = ["전체", "입문 (0~300m, 매우쉬움)", "초급 (300~600m, 쉬움)", "중급 (600~1000m, 보통)", "고급 (1000m 이상, 어려움)"]
+selected_diff = st.sidebar.selectbox("난이도", options=diff_options)
 
-# Height filter
-min_height = float(df['mntihigh'].min(skipna=True))
-max_height = float(df['mntihigh'].max(skipna=True))
-# Handle cases with nan entirely
-if pd.isna(min_height):
-    min_height, max_height = 0.0, 2000.0
+# 소요 시간 필터
+time_options = ["전체", "2시간 이내", "2~3.5시간", "3.5~5시간", "5시간 이상"]
+selected_time = st.sidebar.selectbox("소요 시간", options=time_options)
 
-selected_height = st.sidebar.slider(
-    "고도 범위 (m)",
-    min_value=0,
-    max_value=int(max_height) + 100,
-    value=(0, int(max_height) + 100)
-)
+# 이동 수단 필터
+transport_options = ["무관", "대중교통 우수 지역", "차량 방문 권장"]
+selected_transport = st.sidebar.selectbox("이동 수단", options=transport_options)
 
-filtered_df = filtered_df[
-    (filtered_df['mntihigh'].isna()) | 
-    ((filtered_df['mntihigh'] >= selected_height[0]) & (filtered_df['mntihigh'] <= selected_height[1]))
-]
+# --- FILTERING LOGIC ---
+filtered_df = df.copy()
 
-keyword_rock = st.sidebar.checkbox("바위/암석 특징 산만 보기")
-if keyword_rock:
-    filtered_df = filtered_df[filtered_df['has_rock'] == True]
+if selected_region != "전국":
+    filtered_df = filtered_df[filtered_df['admin_primary'] == selected_region]
 
-keyword_water = st.sidebar.checkbox("계곡/물 특징 산만 보기")
-if keyword_water:
-    filtered_df = filtered_df[filtered_df['has_water'] == True]
+if "입문" in selected_diff:
+    filtered_df = filtered_df[filtered_df['height_category'] == '입문(0~300m)']
+elif "초급" in selected_diff:
+    filtered_df = filtered_df[filtered_df['height_category'] == '초급(300~600m)']
+elif "중급" in selected_diff:
+    filtered_df = filtered_df[filtered_df['height_category'] == '중급(600~1000m)']
+elif "고급" in selected_diff:
+    filtered_df = filtered_df[filtered_df['height_category'] == '고급(1000m~)']
 
-# Overview Metrics
-col1, col2, col3, col4 = st.columns(4)
+if selected_time == "2시간 이내":
+    filtered_df = filtered_df[filtered_df['course_distance_km'] <= 4.0]
+elif selected_time == "2~3.5시간":
+    filtered_df = filtered_df[(filtered_df['course_distance_km'] > 4.0) & (filtered_df['course_distance_km'] <= 7.0)]
+elif selected_time == "3.5~5시간":
+    filtered_df = filtered_df[(filtered_df['course_distance_km'] > 7.0) & (filtered_df['course_distance_km'] <= 10.0)]
+elif selected_time == "5시간 이상":
+    filtered_df = filtered_df[filtered_df['course_distance_km'] > 10.0]
+
+if selected_transport == "대중교통 우수 지역":
+    filtered_df = filtered_df[filtered_df['transport_score'] >= 70]
+elif selected_transport == "차량 방문 권장":
+    filtered_df = filtered_df[filtered_df['transport_score'] < 70]
+
+# 추천 순으로 정렬 (Peak Fit 지수 + 관광 인프라 + 접근성 조합)
+filtered_df = filtered_df.sort_values(by=['peakfit_score', 'tour_demand_score', 'transport_score'], ascending=[True, False, False])
+
+st.markdown(f"**총 {len(filtered_df)}개**의 맞춤 코스가 검색되었습니다.")
+
+# --- RESULT CARDS ---
+col1, col2 = st.columns([1.5, 2])
 
 with col1:
-    st.markdown(f"<div class='metric-label'>총 산불 등록 (필터링 됨)</div><div class='metric-value'>{len(filtered_df)} 개</div>", unsafe_allow_html=True)
+    st.markdown("### 🏆 맞춤 코스 찾기 결과")
+    for _, row in filtered_df.head(5).iterrows():
+        # Weather Emoji
+        weather_status = row['weather_status']
+        if '맑음' in weather_status:
+            weather_icon = "☀️ 맑음 (안전)"
+        elif '비' in weather_status or '눈' in weather_status:
+            weather_icon = "🌧️ 강수 (위험)"
+        else:
+            weather_icon = "☁️ 흐림 (보통)"
+            
+        # UI Card
+        with st.container():
+            st.markdown(f"""
+            <div style="border:1px solid #ddd; padding: 15px; border-radius: 10px; margin-bottom: 15px; background-color: #f9f9f9;">
+                <h4 style='margin-bottom: 5px; color: #1E3A8A;'>📍 {row['mntiname']} ({row['admin_primary']})</h4>
+                <p style="margin-bottom: 5px; color: #555;"><b>거리:</b> {row['course_distance_km']:.1f}km &nbsp;|&nbsp; <b>암반 비율:</b> {row['암반구간비율']:.1f}%</p>
+                <p style="margin-bottom: 5px; color: #D97706;"><b>기상 상태:</b> {weather_icon}</p>
+                <p style="margin-bottom: 5px; color: #10B981;"><b>PeakFit 종합 점수:</b> {row['peakfit_score']:.1f}점 / <b>관광연계 점수:</b> {row['tour_demand_score']:.1f}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+
 with col2:
-    mean_height = filtered_df['mntihigh'].mean()
-    mean_height_str = f"{mean_height:.1f} m" if pd.notna(mean_height) else "N/A"
-    st.markdown(f"<div class='metric-label'>평균 고도</div><div class='metric-value'>{mean_height_str}</div>", unsafe_allow_html=True)
-with col3:
-    max_height_in_filter = filtered_df['mntihigh'].max()
-    max_height_str = f"{max_height_in_filter:.1f} m" if pd.notna(max_height_in_filter) else "N/A"
-    st.markdown(f"<div class='metric-label'>최고 고도</div><div class='metric-value'>{max_height_str}</div>", unsafe_allow_html=True)
-with col4:
-    unique_regions = filtered_df['admin_secondary'].nunique()
-    st.markdown(f"<div class='metric-label'>포함된 시/군/구</div><div class='metric-value'>{unique_regions} 곳</div>", unsafe_allow_html=True)
+    st.markdown("### 🗺️ 맞춤 산 위치 시각화")
+    if not filtered_df.empty:
+        # 산림청 데이터는 x, y 좌표가 있지만 결측일 수도 있음 (mock 으로 일부 좌표 부여)
+        # 만약 실제 좌표가 없으면 서울/경기 위주로 흩뿌림
+        np.random.seed(len(filtered_df))
+        display_df = filtered_df.head(20).copy()
+        if 'lat' not in display_df.columns:
+            display_df['lat'] = np.random.uniform(35.0, 38.0, size=len(display_df))
+            display_df['lon'] = np.random.uniform(126.5, 129.5, size=len(display_df))
+            
+        fig = px.scatter_mapbox(
+            display_df,
+            lat='lat', lon='lon',
+            hover_name='mntiname',
+            hover_data=['admin_primary', 'peakfit_score', 'height_category'],
+            color='peakfit_score',
+            color_continuous_scale=px.colors.sequential.Viridis,
+            size='tour_demand_score',
+            zoom=6,
+            height=600,
+        )
+        fig.update_layout(mapbox_style="carto-positron", margin={"r":0,"t":0,"l":0,"b":0})
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("조건에 맞는 산이 없습니다. 필터를 조정해주세요.")
 
-st.divider()
-
-# Charts
-tab1, tab2, tab3 = st.tabs(["📊 지역 분포", "🌁 고도 분포", "📝 산 특징 및 상세"])
-
-with tab1:
-    st.subheader("시/군/구별 명산 개수")
-    region_counts = filtered_df['admin_secondary'].value_counts().reset_index()
-    region_counts.columns = ['지역', '개수']
-    fig1 = px.bar(region_counts.head(20), x='개수', y='지역', orientation='h', color='개수', color_continuous_scale='Viridis', title="Top 20 산 분포 시/군/구")
-    fig1.update_layout(yaxis={'categoryorder': 'total ascending'})
-    st.plotly_chart(fig1, use_container_width=True)
-
-with tab2:
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("고도 (Histogram)")
-        fig2 = px.histogram(filtered_df, x="mntihigh", nbins=30, color_discrete_sequence=['forestgreen'])
-        fig2.update_layout(xaxis_title="고도 (m)", yaxis_title="빈도수")
-        st.plotly_chart(fig2, use_container_width=True)
-    with col_b:
-        st.subheader("규모 구분")
-        fig3 = px.pie(filtered_df, names="height_category", hole=0.3, color_discrete_sequence=px.colors.qualitative.Pastel)
-        st.plotly_chart(fig3, use_container_width=True)
-
-with tab3:
-    col_x, col_y = st.columns(2)
-    with col_x:
-        st.subheader("주요 특징(계곡/바위) 유무 빈도")
-        features_df = pd.DataFrame({
-            '특징': ['바위산', '계곡물'],
-            '산 개수': [filtered_df['has_rock'].sum(), filtered_df['has_water'].sum()]
-        })
-        fig4 = px.bar(features_df, x='특징', y='산 개수', color='특징', color_discrete_sequence=['#FF9999', '#99CCFF'])
-        st.plotly_chart(fig4, use_container_width=True)
-        
-    with col_y:
-        st.subheader("산 이름 상세 데이터")
-        display_cols = ['mntiname', 'admin_secondary', 'mntihigh', 'height_category', 'has_rock', 'has_water']
-        st.dataframe(filtered_df[display_cols].sort_values(by='mntihigh', ascending=False), height=400)
-
+# --- TOURISM DEMAND ---
 st.markdown("---")
-st.caption("데이터 출처: 산림청 공공데이터포털(Data.go.kr). 이 데모는 Python/Streamlit을 사용하여 구현되었습니다.")
+st.markdown("### 🏞️ 지역별 관광수요 및 인프라 매칭 분석 (다변량 지표)")
+if not filtered_df.empty:
+    chart_df = filtered_df.head(50)
+    fig2 = px.scatter(
+        chart_df, x="transport_score", y="tour_demand_score", 
+        color="height_category", size="course_distance_km", hover_name="mntiname",
+        labels={"transport_score": "대중교통 접근성 (0~100)", "tour_demand_score": "관광 수요/인프라 (0~100)"},
+        title="대중교통 점수 대비 지역 관광 인프라"
+    )
+    st.plotly_chart(fig2, use_container_width=True)
