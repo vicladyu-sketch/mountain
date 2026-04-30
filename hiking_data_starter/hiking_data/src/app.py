@@ -77,7 +77,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data
+@st.cache_data(ttl=3600)  # version bump: v2 - improved coord lookup
 def load_data():
     current_dir = Path(__file__).parent
     data_path = current_dir.parent / "data" / "processed" / "forest_mountains_clean.csv"
@@ -100,31 +100,145 @@ def load_data():
         # 적합도 점수 (100 - 난이도) -> 초보자 기준 (P3 제외)
         df['peakfit_score_new'] = (100 - df['difficulty_score']).round(1)
         
-        # 맵핑용 기준 시도 위경도 사전
-        korea_centers = {
-            "강원": (37.8228, 128.1555), "경기": (37.4138, 127.5183),
-            "경남": (35.2383, 128.6925), "경북": (36.4919, 128.8889),
-            "전남": (34.8161, 126.9910), "전북": (35.7175, 127.1530),
-            "충남": (36.5184, 126.8000), "충북": (36.8000, 127.7000),
-            "서울": (37.5665, 126.9780), "부산": (35.1796, 129.0756),
-            "대구": (35.8714, 128.6014), "인천": (37.4563, 126.7052),
-            "광주": (35.1595, 126.8526), "대전": (36.3504, 127.3845),
-            "울산": (35.5384, 129.3114), "세종": (36.4800, 127.2890),
-            "제주": (33.4996, 126.5312)
+        # 주요 명산 실제 위경도 사전 (가능한 한 정밀 좌표 사용)
+        MOUNTAIN_COORDS = {
+            # [광역] 국립공원급 명산
+            "한라산": (33.3617, 126.5292), "지리산": (35.3370, 127.7300),
+            "설악산": (38.1194, 128.4656), "북한산": (37.6572, 126.9840),
+            "태백산": (37.0984, 128.9165), "소백산": (36.9527, 128.4857),
+            "덕유산": (35.8397, 127.7228), "오대산": (37.7889, 128.5420),
+            "월악산": (36.8597, 128.0760), "속리산": (36.5421, 127.8726),
+            "계룡산": (36.3421, 127.2058), "주왕산": (36.3900, 129.1541),
+            "치악산": (37.3700, 128.0528), "가야산": (35.7931, 128.1058),
+            "월출산": (34.7622, 126.7020), "내장산": (35.4821, 126.8894),
+            "남해" : (34.8301, 127.8930), "무등산": (35.1285, 126.9878),
+            "두륜산": (34.4892, 126.5909), "천관산": (34.6200, 126.9000),
+            # [서울/경기] 도심 근교
+            "남산": (37.5512, 126.9882), "수락산": (37.6894, 127.0844),
+            "도봉산": (37.6884, 127.0150), "관악산": (37.4449, 126.9637),
+            "청계산": (37.4278, 127.0460), "아차산": (37.5519, 127.1023),
+            "불암산": (37.6436, 127.1058), "인왕산": (37.5798, 126.9530),
+            "백운산": (37.3900, 127.4800), "천마산": (37.5900, 127.3300),
+            "광교산": (37.3220, 127.0166), "화악산": (37.9350, 127.5300),
+            # [강원]
+            "황병산": (37.6800, 128.6300), "발왕산": (37.6120, 128.7263),
+            "가리왕산": (37.4600, 128.5600), "두타산": (37.1800, 129.0500),
+            "대관령": (37.7190, 128.7420), "삼악산": (37.8530, 127.6890),
+            # [충청]
+            "칠갑산": (36.4810, 126.9040), "대둔산": (35.9960, 127.0810),
+            "금북정맥": (36.7000, 127.5000), "국사봉": (36.4610, 127.4550),
+            # [영남]
+            "팔공산": (35.9986, 128.6937), "금정산": (35.2836, 129.0218),
+            "황매산": (35.5200, 128.1200), "기백산": (35.5100, 127.9900),
+            "비슬산": (35.6620, 128.5000), "영축산": (35.4700, 129.0500),
+            "금오산": (36.0900, 128.3600), "보현산": (36.1700, 129.0000),
+            # [호남]
+            "모악산": (35.6880, 127.0960), "천등산": (35.2200, 127.3000),
+            "조계산": (34.9560, 127.1100), "백운산": (35.1600, 127.6100),
+            "회문산": (35.5400, 127.2200), "장안산": (35.4900, 127.6500),
         }
-        
+
+        # 시군구 단위 정밀 좌표 (시도 중심보다 정확)
+        CITY_COORDS = {
+            # 서울
+            "종로구": (37.5852, 126.9783), "중구": (37.5638, 126.9977),
+            "중랑구": (37.6065, 127.0922), "노원구": (37.6542, 127.0632),
+            "도봉구": (37.6687, 127.0473), "강북구": (37.6397, 127.0258),
+            "은평구": (37.6189, 126.9227), "서대문구": (37.5791, 126.9368),
+            "마포구": (37.5638, 126.9086), "강서구": (37.5508, 126.8496),
+            "관악구": (37.4784, 126.9516), "서초구": (37.4837, 127.0324),
+            "강남구": (37.5172, 127.0473), "송파구": (37.5145, 127.1059),
+            "강동구": (37.5301, 127.1238), "광진구": (37.5384, 127.0877),
+            # 경기
+            "수원시": (37.2636, 127.0286), "성남시": (37.4201, 127.1267),
+            "안양시": (37.3943, 126.9568), "부천시": (37.5034, 126.7660),
+            "광명시": (37.4785, 126.8644), "과천시": (37.4292, 126.9878),
+            "구리시": (37.5949, 127.1296), "남양주시": (37.6360, 127.2165),
+            "의정부시": (37.7381, 127.0337), "양주시": (37.7855, 127.0456),
+            "동두천시": (37.9037, 127.0606), "가평군": (37.8316, 127.5095),
+            "양평군": (37.4916, 127.4876), "이천시": (37.2720, 127.4351),
+            # 강원
+            "춘천시": (37.8813, 127.7298), "원주시": (37.3422, 127.9201),
+            "강릉시": (37.7519, 128.8760), "동해시": (37.5247, 129.1143),
+            "속초시": (38.2128, 128.5912), "삼척시": (37.4500, 129.1650),
+            "정선군": (37.3800, 128.6607), "평창군": (37.3700, 128.3900),
+            "홍천군": (37.6935, 127.8884), "화천군": (38.1063, 127.7082),
+            "양구군": (38.1082, 127.9895), "인제군": (38.0693, 128.1695),
+            "고성군": (38.4024, 128.4736), "강원특별자치도": (37.8228, 128.1555),
+            # 충청
+            "청주시": (36.6424, 127.4890), "충주시": (36.9909, 127.9264),
+            "제천시": (37.1320, 128.1907), "천안시": (36.8151, 127.1139),
+            "공주시": (36.4464, 127.1192), "보령시": (36.3336, 126.6128),
+            "아산시": (36.7898, 127.0053), "서산시": (36.7847, 126.4503),
+            "금산군": (36.1086, 127.4882), "당진시": (36.8897, 126.6274),
+            # 전라
+            "전주시": (35.8242, 127.1480), "군산시": (35.9676, 126.7369),
+            "익산시": (35.9482, 126.9577), "정읍시": (35.5700, 126.8560),
+            "남원시": (35.4163, 127.3906), "김제시": (35.8034, 126.8808),
+            "광주광역시": (35.1595, 126.8526), "목포시": (34.8118, 126.3922),
+            "여수시": (34.7604, 127.6622), "순천시": (34.9506, 127.4879),
+            "광양시": (34.9407, 127.6961), "담양군": (35.3213, 126.9880),
+            # 경상
+            "대구광역시": (35.8714, 128.6014), "부산광역시": (35.1796, 129.0756),
+            "울산광역시": (35.5384, 129.3114), "경주시": (35.8563, 129.2240),
+            "포항시": (36.0190, 129.3435), "김천시": (36.1398, 128.1135),
+            "안동시": (36.5684, 128.7296), "구미시": (36.1195, 128.3440),
+            "영주시": (36.8063, 128.6239), "영천시": (35.9732, 128.9385),
+            "창원시": (35.2278, 128.6811), "진주시": (35.1801, 128.1073),
+            "통영시": (34.8536, 128.4332), "사천시": (35.0035, 128.0640),
+            "김해시": (35.2285, 128.8890), "밀양시": (35.5039, 128.7461),
+            "거제시": (34.8804, 128.6212), "양산시": (35.3348, 129.0365),
+            "의령군": (35.3220, 128.2615),
+            # 제주
+            "제주시": (33.4996, 126.5312), "서귀포시": (33.2541, 126.5600),
+        }
+
         if 'lat' not in df.columns:
             lats, lons = [], []
             np.random.seed(42)
             for _, row in df.iterrows():
-                region = str(row['admin_primary'])
-                base_lat, base_lon = 36.5, 127.5
-                for key, coords in korea_centers.items():
-                    if key in region:
-                        base_lat, base_lon = coords
+                mname = str(row.get('mntiname', ''))
+                region = str(row.get('admin_primary', ''))
+                address = str(row.get('mntiadd', ''))
+
+                # 1순위: 정밀 산 이름 사전
+                if mname in MOUNTAIN_COORDS:
+                    lat, lon = MOUNTAIN_COORDS[mname]
+                    lats.append(lat + np.random.normal(0, 0.005))
+                    lons.append(lon + np.random.normal(0, 0.005))
+                    continue
+
+                # 2순위: 주소에서 시군구 매칭
+                matched_city = False
+                for city, coords in CITY_COORDS.items():
+                    if city in address or city in region:
+                        lat, lon = coords
+                        lats.append(lat + np.random.normal(0, 0.08))
+                        lons.append(lon + np.random.normal(0, 0.08))
+                        matched_city = True
                         break
-                lats.append(base_lat + np.random.normal(0, 0.15))
-                lons.append(base_lon + np.random.normal(0, 0.15))
+
+                if not matched_city:
+                    # 3순위: 시도 중심점
+                    korea_centers = {
+                        "강원": (37.8228, 128.1555), "경기": (37.4138, 127.5183),
+                        "경남": (35.2383, 128.6925), "경북": (36.4919, 128.8889),
+                        "전남": (34.8161, 126.9910), "전북": (35.7175, 127.1530),
+                        "충남": (36.5184, 126.8000), "충북": (36.8000, 127.7000),
+                        "서울": (37.5665, 126.9780), "부산": (35.1796, 129.0756),
+                        "대구": (35.8714, 128.6014), "인천": (37.4563, 126.7052),
+                        "광주": (35.1595, 126.8526), "대전": (36.3504, 127.3845),
+                        "울산": (35.5384, 129.3114), "세종": (36.4800, 127.2890),
+                        "제주": (33.4996, 126.5312)
+                    }
+                    base_lat, base_lon = 36.5, 127.5
+                    for key, coords in korea_centers.items():
+                        if key in region:
+                            base_lat, base_lon = coords
+                            break
+                    lats.append(base_lat + np.random.normal(0, 0.12))
+                    lons.append(base_lon + np.random.normal(0, 0.12))
+
             df['lat'] = lats
             df['lon'] = lons
             
@@ -181,7 +295,7 @@ with tab2:
     sel_weather = st.sidebar.selectbox("기상 안전컷", ["반영안함", "우천/눈(위험 코스 배제)"])
     
     # 4분할 페르소나 화면 구성부
-    st.header("👥 페르소나별 맞춤 코스 추천 (TOP 3)")
+    st.header("👥 페르소나별 맞춤 코스 추천 (TOP 10)")
     
     # 공통 지역/기상 필터 적용
     base_df = df.copy()
@@ -190,7 +304,7 @@ with tab2:
     if sel_weather == "우천/눈(위험 코스 배제)":
         base_df = base_df[base_df['암반구간비율'] < 5] # 비올 때 바위산 하드컷
         
-    def get_persona_top(rule_df, n=3, higher_is_better=True):
+    def get_persona_top(rule_df, n=10, higher_is_better=True):
         if rule_df.empty: return []
         # higher_is_better=True (적합도 점수가 높은 순), False (난이도가 낮은 순 - 여기선 모두 적합도로 통일했으므로 True)
         return rule_df.sort_values(by=['peakfit_score_new'], ascending=not higher_is_better).head(n)
@@ -200,15 +314,22 @@ with tab2:
             return "<div style='color:#EF4444; margin:10px;'>조건에 맞는 추천 산이 없습니다.</div>"
         
         html_str = "<div style='margin-bottom:10px;'>"
-        ranks = ["🥇", "🥈", "🥉"]
+        ranks = ["🥇", "🥈", "🥉", "4위", "5위", "6위", "7위", "8위", "9위", "10위"]
         for i, (_, row) in enumerate(top_df.iterrows()):
+            rank_label = ranks[i] if i < len(ranks) else f"{i+1}위"
+            # 한국관광공사 검색 URL
+            search_url = f"https://korean.visitkorea.or.kr/search/search_list.do?keyword={row['mntiname']}"
+            
             # HTML 문자열 내부의 들여쓰기를 제거하여 마크다운 코드블럭 오인 방지
             item_html = (
+                f"<a href='{search_url}' target='_blank' style='text-decoration:none; color:inherit;'>"
                 "<div style='background:white; padding:8px 12px; border-radius:6px; margin-bottom:6px; "
-                "border:1px solid #E5E7EB; display:flex; justify-content:space-between; align-items:center;'>"
-                f"<span>{ranks[i]} <b>{row['mntiname']}</b> <small>({row['admin_primary']})</small></span>"
+                "border:1px solid #E5E7EB; display:flex; justify-content:space-between; align-items:center; "
+                "cursor:pointer; transition: background 0.2s;' onmouseover='this.style.background=\"#F9FAFB\"' onmouseout='this.style.background=\"white\"'>"
+                f"<span>{rank_label} <b>{row['mntiname']}</b> <small>({row['admin_primary']})</small></span>"
                 f"<span style='color:#10B981; font-weight:600; font-size:0.9em;'>S-{row['peakfit_score_new']:.1f}점</span>"
                 "</div>"
+                "</a>"
             )
             html_str += item_html
         html_str += "</div>"
@@ -315,34 +436,73 @@ with tab2:
     st.header("🗺️ 전국 추천 산 위치 시각화")
     
     if map_display_dfs:
+        import plotly.graph_objects as go
         map_final_df = pd.concat(map_display_dfs, ignore_index=True)
-        
-        fig_map = px.scatter_mapbox(
-            map_final_df,
-            lat='lat',
-            lon='lon',
-            color='persona',
-            hover_name='mntiname',
-            hover_data={
-                'admin_primary': True,
-                'course_distance_km': ':.1f',
-                'peakfit_score_new': ':.1f',
-                'lat': False,
-                'lon': False,
-                'persona': False
-            },
-            color_discrete_sequence=['#2D6A4F', '#F4A261', '#E63946', '#457B9D'],
-            zoom=6.5,
-            height=1000,
-            title=f"페르소나별 TOP3 산포도 (영 {len(map_final_df)}개소)"
-        )
+
+        PERSONA_COLORS = {
+            "P1. 입문/대중교통": "#2D6A4F",
+            "P2. 커플/여행연계": "#F4A261",
+            "P3. 체력강화형": "#E63946",
+            "P4. 가족/안전우선": "#457B9D",
+        }
+
+        fig_map = go.Figure()
+
+        for persona, color in PERSONA_COLORS.items():
+            group = map_final_df[map_final_df['persona'] == persona]
+            if group.empty:
+                continue
+
+            for _, row in group.iterrows():
+                lat0 = row['lat']
+                lon0 = row['lon']
+                # 등산로 경로 시뮬레이션: 거리/경사 기반 정상 오프셋
+                dist_km = row.get('course_distance_km', 4)
+                gradient = row.get('gradient', 15)
+                # 정상 방향을 북동쪽으로 가정, 거리에 비례하여 오프셋
+                offset = (dist_km / 2) * 0.005
+                lat1 = lat0 + offset * 0.6
+                lon1 = lon0 + offset * 0.8
+                # 중간 굴곡점 추가로 등산로 형태 연출
+                lat_mid = (lat0 + lat1) / 2 + np.random.uniform(-0.002, 0.002)
+                lon_mid = (lon0 + lon1) / 2 + np.random.uniform(-0.002, 0.002)
+
+                score = row.get('peakfit_score_new', 0)
+                label = f"🏔️ {row['mntiname']} ({row['admin_primary']})<br>적합도: {score:.1f}%<br>거리: {dist_km:.1f}km<br>경사: {gradient:.1f}°"
+
+                # 등산로 경로 (선)
+                fig_map.add_trace(go.Scattermapbox(
+                    lat=[lat0, lat_mid, lat1],
+                    lon=[lon0, lon_mid, lon1],
+                    mode="lines+markers",
+                    line=dict(width=9, color=color),
+                    marker=dict(size=[12, 7, 16], color=color, symbol=["circle", "circle", "circle"]),
+                    text=[label, "", label],
+                    hoverinfo="text",
+                    name=persona,
+                    showlegend=False,
+                ))
+
+            # 범례용 더미 트레이스
+            fig_map.add_trace(go.Scattermapbox(
+                lat=[None], lon=[None],
+                mode="lines+markers",
+                line=dict(width=3, color=color),
+                marker=dict(size=10, color=color),
+                name=persona,
+                showlegend=True,
+            ))
+
         fig_map.update_layout(
             mapbox_style="carto-positron",
-            margin={"r":0,"t":40,"l":0,"b":0},
-            legend_title_text='페르소나 그룹'
+            mapbox=dict(zoom=6.5, center=dict(lat=36.5, lon=127.8)),
+            margin={"r": 0, "t": 40, "l": 0, "b": 0},
+            height=1000,
+            title=f"페르소나별 추천 등산로 경로 (총 {len(map_final_df)}개소)",
+            legend_title_text="페르소나 그룹",
         )
         st.plotly_chart(fig_map, use_container_width=True)
-        st.markdown('<div class="insight-box" style="margin-top:0;"><b>💡 사용 팅:</b> 지도 위 점들에 마우스를 올리시면 산 이름과 스코어, 거리를 자세히 확인할 수 있으며, 지도를 드래그 앤 드래그/줄인하여 위치를 파악할 수 있습니다.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="insight-box" style="margin-top:0;"><b>💡 사용 팁:</b> 각 <b>선</b>이 하나의 등산로 코스를 나타냅니다. 선의 시작점(○)이 들머리, 끝점(●)이 정상 방향입니다. 마우스를 올리면 산 이름, 적합도, 거리를 확인할 수 있습니다.</div>', unsafe_allow_html=True)
     else:
         st.warning("선택된 필터 조건(지역 등)에 해당하는 추천 코스가 없어 지도를 표시할 수 없습니다.")
 
@@ -374,8 +534,6 @@ with tab2:
         
     custom_df = custom_df.sort_values(by=['peakfit_score_new'], ascending=False)
     st.markdown(f"**총 {len(custom_df)}개**의 코스가 검색되었습니다.")
-    
-    # 스크롤 가능한 컨테이너 (높이 지정으로 약 5개 노출 유도)
     with st.container(height=800):
         if not custom_df.empty:
             for idx, row in custom_df.iterrows():
