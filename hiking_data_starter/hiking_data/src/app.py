@@ -312,6 +312,41 @@ with tab2:
             """, unsafe_allow_html=True)
 
     st.markdown("---")
+    st.header("🗺️ 전국 추천 산 위치 시각화")
+    
+    if map_display_dfs:
+        map_final_df = pd.concat(map_display_dfs, ignore_index=True)
+        
+        fig_map = px.scatter_mapbox(
+            map_final_df,
+            lat='lat',
+            lon='lon',
+            color='persona',
+            hover_name='mntiname',
+            hover_data={
+                'admin_primary': True,
+                'course_distance_km': ':.1f',
+                'peakfit_score_new': ':.1f',
+                'lat': False,
+                'lon': False,
+                'persona': False
+            },
+            color_discrete_sequence=['#2D6A4F', '#F4A261', '#E63946', '#457B9D'],
+            zoom=6.5,
+            height=1000,
+            title=f"페르소나별 TOP3 산포도 (영 {len(map_final_df)}개소)"
+        )
+        fig_map.update_layout(
+            mapbox_style="carto-positron",
+            margin={"r":0,"t":40,"l":0,"b":0},
+            legend_title_text='페르소나 그룹'
+        )
+        st.plotly_chart(fig_map, use_container_width=True)
+        st.markdown('<div class="insight-box" style="margin-top:0;"><b>💡 사용 팅:</b> 지도 위 점들에 마우스를 올리시면 산 이름과 스코어, 거리를 자세히 확인할 수 있으며, 지도를 드래그 앤 드래그/줄인하여 위치를 파악할 수 있습니다.</div>', unsafe_allow_html=True)
+    else:
+        st.warning("선택된 필터 조건(지역 등)에 해당하는 추천 코스가 없어 지도를 표시할 수 없습니다.")
+
+    st.markdown("---")
     st.header("🎯 내 조건 직접 검색 (Custom Search)")
     # 수동 입력조건 필터링
     custom_df = base_df.copy()
@@ -361,40 +396,7 @@ with tab2:
         else:
             st.info("검색된 코스가 없습니다. 필터 조건을 조정해 보세요.")
 
-    st.markdown("---")
-    st.header("🗺️ 전국 추천 산 위치 시각화")
-    
-    if map_display_dfs:
-        map_final_df = pd.concat(map_display_dfs, ignore_index=True)
-        
-        fig_map = px.scatter_mapbox(
-            map_final_df,
-            lat='lat',
-            lon='lon',
-            color='persona',
-            hover_name='mntiname',
-            hover_data={
-                'admin_primary': True,
-                'course_distance_km': ':.1f',
-                'peakfit_score_new': ':.1f',
-                'lat': False,
-                'lon': False,
-                'persona': False
-            },
-            color_discrete_sequence=['#2D6A4F', '#F4A261', '#E63946', '#457B9D'],
-            zoom=6.5,
-            height=1000,
-            title=f"페르소나별 TOP3 산포도 (총 {len(map_final_df)}개소)"
-        )
-        fig_map.update_layout(
-            mapbox_style="carto-positron",
-            margin={"r":0,"t":40,"l":0,"b":0},
-            legend_title_text='페르소나 그룹'
-        )
-        st.plotly_chart(fig_map, use_container_width=True)
-        st.markdown('<div class="insight-box" style="margin-top:0;"><b>💡 사용 팁:</b> 지도 위 점들에 마우스를 올리시면 산 이름과 스코어, 거리를 자세히 확인할 수 있으며, 지도를 드래그 앤 드래그/줌인하여 위치를 파악할 수 있습니다.</div>', unsafe_allow_html=True)
-    else:
-        st.warning("선택된 필터 조건(지역 등)에 해당하는 추천 코스가 없어 지도를 표시할 수 없습니다.")
+
 
 # ================================
 # TAB 3: 데이터 분석 (EDA)
@@ -456,10 +458,10 @@ with tab3:
         fig_m3 = px.density_heatmap(target_df, x="누적상승고도", y="peakfit_score_new", title=f"[{prefix}] 누적고도 vs 적합도 밀집도")
         st.plotly_chart(fig_m3, use_container_width=True)
         
-        # 4. 거리 X 소요시간 회귀분석
-        # 목시간 계산
+        # 4. 거리 X 소요시간 (추세선 없이 - Cloud 환경 statsmodels 미지원)
         target_df['est_time'] = target_df['course_distance_km'] * 0.5 + target_df['누적상승고도'] * 0.001
-        fig_m4 = px.scatter(target_df, x="course_distance_km", y="est_time", color="has_rock", trendline="ols", title=f"[{prefix}] 거리 대비 예상 산행시간 (바위/흙산)")
+        fig_m4 = px.scatter(target_df, x="course_distance_km", y="est_time", color="has_rock",
+                            title=f"[{prefix}] 거리 대비 예상 산행시간 (바위/흙산)")
         st.plotly_chart(fig_m4, use_container_width=True)
         
         # 5. 난도 등급별 피벗 집계
