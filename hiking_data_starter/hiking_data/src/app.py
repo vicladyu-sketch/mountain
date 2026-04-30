@@ -31,7 +31,10 @@ st.markdown("""
 @st.cache_data
 def load_data():
     """Load preprocessed data."""
-    data_path = Path("data/processed/forest_mountains_clean.csv")
+    # app.py 위치를 기준으로 상대 경로 설정 (streamlit cloud 배포 시 경로 오류 방지)
+    current_dir = Path(__file__).parent
+    data_path = current_dir.parent / "data" / "processed" / "forest_mountains_clean.csv"
+    
     if data_path.exists():
         df = pd.read_csv(data_path)
         return df
